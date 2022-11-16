@@ -466,6 +466,21 @@ where
         self.database.borrow().iter_txs(include_raw)
     }
 
+    /// Return a transaction given its txid
+    ///
+    /// Optionally fill the [`TransactionDetails::transaction`] field with the raw transaction if
+    /// `include_raw` is `true`.
+    ///
+    /// Note that this methods only operate on the internal database, which first needs to be
+    /// [`Wallet::sync`] manually.
+    pub fn get_transaction(
+        &self,
+        txid: &Txid,
+        include_raw: bool,
+    ) -> Result<Option<TransactionDetails>, Error> {
+        self.database.borrow().get_tx(txid, include_raw)
+    }
+
     /// Return the balance, separated into available, trusted-pending, untrusted-pending and immature
     /// values.
     ///
