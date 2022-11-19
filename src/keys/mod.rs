@@ -97,7 +97,7 @@ impl<Ctx: ScriptContext> DescriptorKey<Ctx> {
     pub fn as_public(&self, secp: &SecpCtx) -> Result<DescriptorPublicKey, KeyError> {
         match self {
             DescriptorKey::Public(pk, _, _) => Ok(pk.clone()),
-            DescriptorKey::Secret(secret, _, _) => Ok(secret.as_public(secp)?),
+            DescriptorKey::Secret(secret, _, _) => Ok(secret.to_public(secp)?),
         }
     }
 
@@ -119,7 +119,7 @@ impl<Ctx: ScriptContext> DescriptorKey<Ctx> {
                 let mut key_map = KeyMap::with_capacity(1);
 
                 let public = secret
-                    .as_public(secp)
+                    .to_public(secp)
                     .map_err(|e| miniscript::Error::Unexpected(e.to_string()))?;
                 key_map.insert(public.clone(), secret);
                 Ok((public, key_map, valid_networks))
