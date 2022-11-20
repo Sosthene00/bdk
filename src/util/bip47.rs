@@ -19,10 +19,11 @@ use bitcoin::consensus::encode::serialize;
 use bitcoin::hashes::{sha256, sha512, Hmac, HmacEngine};
 use bitcoin::secp256k1::ecdh::SharedSecret;
 use bitcoin::secp256k1::{PublicKey, SecretKey};
+use bitcoin::secp256k1::scalar;
 use bitcoin::util::base58;
 use bitcoin::util::bip32;
 use bitcoin::util::psbt;
-use bitcoin::{Address, Network, OutPoint, Script, Transaction, TxIn, Txid, network};
+use bitcoin::{Address, Network, OutPoint, Script, Transaction, TxIn, Txid};
 
 use crate::blockchain::BlockchainFactory;
 use crate::database::{BatchDatabase, MemoryDatabase};
@@ -102,7 +103,7 @@ impl PaymentCode {
 
     pub fn notification_address(&self, secp: &SecpCtx, network: Network) -> Address {
         Address::p2pkh(
-            self.public_key,
+            &bitcoin::PublicKey{ compressed:true, inner:self.public_key} ,
             network,
         )
     }
@@ -374,13 +375,14 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
 
         let mut pk = payment_code.derive(secp, 0);
         let mut sk = self.secret(&vec![bip32::ChildNumber::Normal { index }]);
-
-        pk.mul_tweak(secp, Scalar::new(sk.as_ref()))?;
+        
+        pk.mul_tweak(secp, &scalar::Scalar::from(sk))?;
         let shared_secret = sha256::Hash::hash(&pk.serialize()[1..]);
         if let Err(_) = SecretKey::from_slice(&shared_secret) {
             return Ok(None);
         }
-        sk.add_tweak(&shared_secret)?;
+        
+        // sk.add_tweak(&scalar::Scalar::from(&shared_secret.into_32()))?;
 
         let wallet = Wallet::new(
             P2Pkh(bitcoin::PrivateKey {
@@ -410,7 +412,7 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
         let sk = self.secret(&vec![bip32::ChildNumber::Normal { index: 0 }]);
 
         let mut s = pk.clone();
-        s.mul_assign(secp, sk.as_ref())?;
+        s.mul_tweak(secp, &scalar::Scalar::from(sk))?;
         let shared_secret = sha256::Hash::hash(&s.serialize()[1..]);
         let pk = match SecretKey::from_slice(&shared_secret) {
             Ok(sk) => pk.combine(&PublicKey::from_secret_key(secp, &sk))?,
@@ -418,7 +420,10 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
         };
 
         let wallet = Wallet::new(
-            P2Pkh(bitcoin::PublicKey),
+            P2Pkh(bitcoin::PublicKey{
+                compressed: true,
+                inner: pk,
+            }),
             None,
             network,
             MemoryDatabase::new(),
@@ -595,7 +600,11 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
                                 .expect("Derivation shouldn't fail")
                                 .private_key;
 
-                            return Some((key.public_key(secp), key));
+                            return Some((bitcoin::PublicKey{ compressed:true, inner:key.public_key(secp)}, bitcoin::PrivateKey{
+                                compressed: true,
+                                network: Network::Bitcoin,
+                                inner: key
+                            }));
                         }
                     }
 
@@ -610,7 +619,7 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
 
         let shared_secret = SharedSecret::new(
             &payment_code.public_key,
-            &keys_map.values().next().expect("Key is present").key,
+            &keys_map.values().next().expect("Key is present").inner,
         );
         Ok(BlindingFactor::new(shared_secret, &outpoint))
     }
