@@ -726,7 +726,7 @@ mod test {
         // let key = PrivateKey::from_wif("cU1zSPAAHNGE8quJZkBsFJELTxfJRsS82Z4M4WPb95VcdpBM9gBv").unwrap();
         // let key =
         //     PrivateKey::from_wif("L3esrLZfpd5B2GGSjVSUiHGZvDtDpAAFRLGKP9UiMC46pbfYAJJk").unwrap();
-        let m = crate::keys::Mnemonic::parse(
+        let m = crate::keys::bip39::Mnemonic::parse(
             "response seminar brave tip suit recall often sound stick owner lottery motion",
         )
         .unwrap();
