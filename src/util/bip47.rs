@@ -379,12 +379,12 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
         let mut pk = payment_code.derive(secp, 0);
         let mut sk = self.secret(&vec![bip32::ChildNumber::Normal { index }]);
 
-        pk.mul_tweak(secp, &Scalar::from(sk))?;
+        pk = pk.mul_tweak(secp, &Scalar::from(sk))?;
         let shared_secret = sha256::Hash::hash(&pk.serialize()[1..]);
         if let Err(_) = SecretKey::from_slice(&shared_secret) {
             return Ok(None);
         }
-        sk.add_tweak(&Scalar::from_be_bytes(shared_secret.into_inner())?)?;
+        sk = sk.add_tweak(&Scalar::from_be_bytes(shared_secret.into_inner())?)?;
 
         let wallet = Wallet::new(
             P2Pkh(bitcoin::PrivateKey {
@@ -414,7 +414,7 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
         let sk = self.secret(&vec![bip32::ChildNumber::Normal { index: 0 }]);
 
         let mut s = pk.clone();
-        s.mul_tweak(secp, &Scalar::from(sk))?;
+        s = s.mul_tweak(secp, &Scalar::from(sk))?;
         let shared_secret = sha256::Hash::hash(&s.serialize()[1..]);
         let pk = match SecretKey::from_slice(&shared_secret) {
             Ok(sk) => pk.combine(&PublicKey::from_secret_key(secp, &sk))?,
