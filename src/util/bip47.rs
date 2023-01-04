@@ -273,7 +273,7 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
                                 w.get_address(AddressIndex::New)?,
                                 w.get_balance()?
                             );
-                            if w.get_balance()?.confirmed == 0 { // Actually unclear what is the correct check here
+                            if w.get_balance()?.get_total() == 0 {
                                 break;
                             }
                         }
@@ -313,7 +313,7 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
                     Some(w) => {
                         sync_wallet(&w, blockchain)?;
                         println!("\tbalance: {}", w.get_balance()?);
-                        if w.get_balance()?.confirmed == 0 {
+                        if w.get_balance()?.get_total() == 0 {
                             break;
                         }
                     }
