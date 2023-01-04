@@ -701,6 +701,7 @@ impl From<OutOfRangeError> for Error {
 #[cfg(test)]
 mod test {
     use std::sync::Arc;
+    use std::vec;
 
     use bitcoin::*;
     use electrum_client::*;
@@ -710,6 +711,72 @@ mod test {
     use crate::database::*;
     use crate::descriptor::template::*;
     use crate::wallet::*;
+
+    #[test]
+    fn test_derive_outbound_wallet() {
+        let mut bob_addresses = vec![
+            "1KQvRShk6NqPfpr4Ehd53XUhpemBXtJPTL",
+            "1CZAmrbKL6fJ7wUxb99aETwXhcGeG3CpeA",
+            "1FsBVhT5dQutGwaPePTYMe5qvYqqjxyftc",
+            "12u3Uued2fuko2nY4SoSFGCoGLCBUGPkk6",
+            "141fi7TY3h936vRUKh1qfUZr8rSBuYbVBK",
+        ];
+        let bob_paymentcode = PaymentCode::from_str("PM8TJS2JxQ5ztXUpBBRnpTbcUXbUHy2T1abfrb3KkAAtMEGNbey4oumH7Hc578WgQJhPjBxteQ5GHHToTYHE3A1w6p7tU6KSoFmWBVbFGjKPisZDbP97").unwrap();
+
+        let m = crate::keys::bip39::Mnemonic::parse(
+            "response seminar brave tip suit recall often sound stick owner lottery motion",
+        )
+        .unwrap();
+        let alice_main_wallet = Wallet::new(
+            Bip44(m.clone(), KeychainKind::External),
+            None,
+            Network::Bitcoin,
+            MemoryDatabase::new(),
+        )
+        .unwrap();
+        let mut alice = Bip47Wallet::new(m, &alice_main_wallet).unwrap();
+        for i in 0..5 {
+            let outbound_wallet = alice.derive_outbound_wallet(&bob_paymentcode, i).unwrap().unwrap();
+
+            let bob_address = outbound_wallet.get_address(AddressIndex::New).unwrap().to_string();
+            let test_address = bob_addresses.pop().unwrap().to_owned();
+            println!("Testing for address {}", test_address);
+            assert_eq!(&bob_address, &test_address, "{} != {}", bob_address, test_address);
+        }
+    }
+
+    #[test]
+    fn test_derive_inbound_wallet() {
+        let mut bob_addresses = vec![
+            "1KQvRShk6NqPfpr4Ehd53XUhpemBXtJPTL",
+            "1CZAmrbKL6fJ7wUxb99aETwXhcGeG3CpeA",
+            "1FsBVhT5dQutGwaPePTYMe5qvYqqjxyftc",
+            "12u3Uued2fuko2nY4SoSFGCoGLCBUGPkk6",
+            "141fi7TY3h936vRUKh1qfUZr8rSBuYbVBK",
+        ];
+        let alice_paymentcode = PaymentCode::from_str("PM8TJTLJbPRGxSbc8EJi42Wrr6QbNSaSSVJ5Y3E4pbCYiTHUskHg13935Ubb7q8tx9GVbh2UuRnBc3WSyJHhUrw8KhprKnn9eDznYGieTzFcwQRya4GA").unwrap();
+
+        let m = crate::keys::bip39::Mnemonic::parse(
+            "reward upper indicate eight swift arch injury crystal super wrestle already dentist",
+        )
+        .unwrap();
+        let bob_main_wallet = Wallet::new(
+            Bip44(m.clone(), KeychainKind::External),
+            None,
+            Network::Bitcoin,
+            MemoryDatabase::new(),
+        )
+        .unwrap();
+        let mut bob = Bip47Wallet::new(m, &bob_main_wallet).unwrap();
+        for i in 0..5 {
+            let inbound_wallet = bob.derive_inbound_wallet(&alice_paymentcode, i).unwrap().unwrap();
+
+            let bob_address = inbound_wallet.get_address(AddressIndex::New).unwrap().to_string();
+            let test_address = bob_addresses.pop().unwrap().to_owned();
+            println!("Testing for address {}", test_address);
+            assert_eq!(&bob_address, &test_address, "{} != {}", bob_address, test_address);
+        }
+    }
 
     #[test]
     fn t() {
