@@ -202,7 +202,7 @@ pub struct Bip44<K: DerivableKey<Legacy>>(pub K, pub KeychainKind);
 
 impl<K: DerivableKey<Legacy>> DescriptorTemplate for Bip44<K> {
     fn build(self, network: Network) -> Result<DescriptorTemplateOut, DescriptorError> {
-        P2Pkh(legacy::make_bipxx_private(44, self.0, self.1, network)?).build(network)
+        P2Pkh(legacy::make_bipxx_private(44, self.0, Some(self.1), network)?).build(network)
     }
 }
 
@@ -281,7 +281,7 @@ pub struct Bip49<K: DerivableKey<Segwitv0>>(pub K, pub KeychainKind);
 
 impl<K: DerivableKey<Segwitv0>> DescriptorTemplate for Bip49<K> {
     fn build(self, network: Network) -> Result<DescriptorTemplateOut, DescriptorError> {
-        P2Wpkh_P2Sh(segwit_v0::make_bipxx_private(49, self.0, self.1, network)?).build(network)
+        P2Wpkh_P2Sh(segwit_v0::make_bipxx_private(49, self.0, Some(self.1), network)?).build(network)
     }
 }
 
@@ -360,7 +360,7 @@ pub struct Bip84<K: DerivableKey<Segwitv0>>(pub K, pub KeychainKind);
 
 impl<K: DerivableKey<Segwitv0>> DescriptorTemplate for Bip84<K> {
     fn build(self, network: Network) -> Result<DescriptorTemplateOut, DescriptorError> {
-        P2Wpkh(segwit_v0::make_bipxx_private(84, self.0, self.1, network)?).build(network)
+        P2Wpkh(segwit_v0::make_bipxx_private(84, self.0, Some(self.1), network)?).build(network)
     }
 }
 
@@ -415,7 +415,7 @@ macro_rules! expand_make_bipxx {
             pub(super) fn make_bipxx_private<K: DerivableKey<$ctx>>(
                 bip: u32,
                 key: K,
-                keychain: KeychainKind,
+                keychain: Option<KeychainKind>,
                 network: Network,
             ) -> Result<impl IntoDescriptorKey<$ctx>, DescriptorError> {
                 let mut derivation_path = Vec::with_capacity(4);
@@ -432,12 +432,13 @@ macro_rules! expand_make_bipxx {
                 derivation_path.push(bip32::ChildNumber::from_hardened_idx(0)?);
 
                 match keychain {
-                    KeychainKind::External => {
+                    Some(KeychainKind::External) => {
                         derivation_path.push(bip32::ChildNumber::from_normal_idx(0)?)
                     }
-                    KeychainKind::Internal => {
+                    Some(KeychainKind::Internal) => {
                         derivation_path.push(bip32::ChildNumber::from_normal_idx(1)?)
                     }
+                    None => {},
                 };
 
                 let derivation_path: bip32::DerivationPath = derivation_path.into();
@@ -473,6 +474,18 @@ macro_rules! expand_make_bipxx {
 
 expand_make_bipxx!(legacy, Legacy);
 expand_make_bipxx!(segwit_v0, Segwitv0);
+
+/// BIP47 template. Expands to `pkh(key/47'/{0,1}'/0'/*)`
+///
+/// Since there are hardened derivation steps, this template requires a private derivable key (generally a `xprv`/`tprv`).
+/// TODO: add an example
+pub struct Bip47<K: DerivableKey<Legacy>>(pub K);
+
+impl<K: DerivableKey<Legacy>> DescriptorTemplate for Bip47<K> {
+    fn build(self, network: Network) -> Result<DescriptorTemplateOut, DescriptorError> {
+        P2Pkh(legacy::make_bipxx_private(47, self.0, None, network)?).build(network)
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -540,6 +553,40 @@ mod test {
             };
             let address = child_desc.address(Regtest).unwrap();
             assert_eq!(address.to_string(), *expected.get(i).unwrap());
+        }
+    }
+
+    // BIP47 `pkh(key/47'/{0,1}'/0'/*)`
+    #[test]
+    fn test_bip47_template_cointype() {
+        use bitcoin::util::bip32::ChildNumber::{self, Hardened};
+
+        let xprvkey = bitcoin::util::bip32::ExtendedPrivKey::from_str("xprv9s21ZrQH143K4WqdBSH6cNgoTz8U9UJ1cAwwZmJHw6LyXJT8BGe4gmEmc8wQSCT9Uz6wos96fkPsshRzXzWRz6koJWq3mkJcYMSrCecqTgT").unwrap();
+        assert_eq!(Network::Bitcoin, xprvkey.network);
+        let xdesc = Bip47(xprvkey)
+            .build(Network::Bitcoin)
+            .unwrap();
+
+        if let ExtendedDescriptor::Pkh(pkh) = xdesc.0 {
+            let path: Vec<ChildNumber> = pkh.into_inner().full_derivation_path().into();
+            let purpose = path.get(0).unwrap();
+            assert!(matches!(purpose, Hardened { index: 47 }));
+            let coin_type = path.get(1).unwrap();
+            assert!(matches!(coin_type, Hardened { index: 0 }));
+        }
+
+        let tprvkey = bitcoin::util::bip32::ExtendedPrivKey::from_str("tprv8ZgxMBicQKsPcyyJfrCbHUtdgLELW42tiX9uUa542NYCbzpnR5rSWFGDCfiUSHtWcgcrj9hftTYxyFQ3diDSVwTtsXiTqHaT6BzYtu22yJF").unwrap();
+        assert_eq!(Network::Testnet, tprvkey.network);
+        let tdesc = Bip47(tprvkey)
+            .build(Network::Testnet)
+            .unwrap();
+
+        if let ExtendedDescriptor::Pkh(pkh) = tdesc.0 {
+            let path: Vec<ChildNumber> = pkh.into_inner().full_derivation_path().into();
+            let purpose = path.get(0).unwrap();
+            assert!(matches!(purpose, Hardened { index: 47 }));
+            let coin_type = path.get(1).unwrap();
+            assert!(matches!(coin_type, Hardened { index: 1 }));
         }
     }
 

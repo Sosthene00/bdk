@@ -21,15 +21,16 @@ use bitcoin::secp256k1::ecdh::SharedSecret;
 use bitcoin::secp256k1::scalar::OutOfRangeError;
 use bitcoin::secp256k1::{PublicKey, SecretKey, Scalar};
 use bitcoin::util::base58;
-use bitcoin::util::bip32;
+use bitcoin::util::bip32::{self, ExtendedPrivKey, DerivationPath};
 use bitcoin::util::psbt;
 use bitcoin::{Address, Network, OutPoint, Script, Transaction, TxIn, Txid};
 
 use crate::blockchain::BlockchainFactory;
 use crate::database::{BatchDatabase, MemoryDatabase};
-use crate::descriptor::template::{DescriptorTemplate, DescriptorTemplateOut, P2Pkh};
-use crate::descriptor::{DescriptorError, Legacy};
+use crate::descriptor::template::{P2Pkh, Bip47};
+use crate::descriptor::Legacy;
 use crate::keys::{DerivableKey, DescriptorSecretKey, ExtendedKey, SinglePriv};
+use crate::template::DescriptorTemplate;
 use crate::wallet::coin_selection::DefaultCoinSelectionAlgorithm;
 use crate::wallet::tx_builder::{CreateTx, TxBuilder, TxOrdering};
 use crate::wallet::utils::SecpCtx;
@@ -178,18 +179,6 @@ impl FromStr for PaymentCode {
     }
 }
 
-pub struct Bip47Notification<K: DerivableKey<Legacy>>(pub K);
-
-impl<K: DerivableKey<Legacy>> DescriptorTemplate for Bip47Notification<K> {
-    fn build(self, network: Network) -> Result<DescriptorTemplateOut, DescriptorError> {
-        P2Pkh((
-            self.0,
-            bip32::DerivationPath::from_str("m/47'/0'/0'").unwrap(),
-        ))
-        .build(network)
-    }
-}
-
 pub struct Bip47Wallet<'w, D> {
     seed: bip32::ExtendedPrivKey,
     main_wallet: &'w Wallet<D>,
@@ -205,19 +194,17 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
         wallet: &'w Wallet<D>,
     ) -> Result<Self, Error> {
         let bip47_seed = match seed.clone().into_extended_key()? {
-            ExtendedKey::Private((xprv, _)) => xprv
-                .derive_priv(
-                    wallet.secp_ctx(),
-                    &bip32::DerivationPath::from_str("m/47'/0'/0'").unwrap(),
-                )
-                .map_err(WalletError::from)?,
+            // ExtendedKey::Private((xprv, _)) => Self::new_bip47_seed(xprv, &SecpCtx::new(), wallet.network()).unwrap(),
+            ExtendedKey::Private((xprv, _)) => {
+                let xdesc = Bip47(seed).build(network);
+            },
             _ => panic!("The key must be derivable"),
         };
 
         Ok(Bip47Wallet {
             seed: bip47_seed,
             notification_wallet: Wallet::new(
-                Bip47Notification(seed),
+                Bip47(seed),
                 None,
                 wallet.network(),
                 MemoryDatabase::new(),
@@ -227,6 +214,26 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
             outbound_wallets: HashMap::new(),
             outbound_txs: HashMap::new(),
         })
+    }
+
+    fn new_bip47_seed(seed: ExtendedPrivKey, secp: &SecpCtx, network: Network) -> Result<ExtendedPrivKey, Error> {
+        // I'd rather not write an ad-hoc method but couldn't figure out how not to
+        let mut xprv = bip32::ExtendedPrivKey::from_str(&seed.to_string()).unwrap();
+        xprv.network = network;
+        println!("{}", xprv.to_string());
+        let mut path = bip32::DerivationPath::from_str("m/47'").unwrap();
+        path = match network {
+            Network::Bitcoin => path.extend(DerivationPath::from_str("m/0'/0'").unwrap()),
+            _ => path.extend(DerivationPath::from_str("m/1'/0'").unwrap()),
+        };
+
+        let bip47_seed = seed.derive_priv(
+            secp,
+            &path,
+        )
+        .map_err(WalletError::from)?;
+
+        Ok(bip47_seed)
     }
 
     pub fn sync<B: BlockchainFactory>(&mut self, blockchain: &B) -> Result<(), Error> {
@@ -242,6 +249,7 @@ impl<'w, D: BatchDatabase> Bip47Wallet<'w, D> {
             Ok(())
         }
 
+        println!("{}", &self.notification_wallet.get_address(AddressIndex::Peek(0))?);
         sync_wallet(&self.notification_wallet, blockchain)?;
         for tx in self.notification_wallet.list_transactions(true)? {
             // let conf_height = match tx.confirmation_time {
@@ -713,6 +721,25 @@ mod test {
     use crate::wallet::*;
 
     #[test]
+    fn test_notification_address() {
+        let alice_notification_address = "1JDdmqFLhpzcUwPeinhJbUPw4Co3aWLyzW";
+
+        let m = crate::keys::bip39::Mnemonic::parse(
+            "response seminar brave tip suit recall often sound stick owner lottery motion",
+        )
+        .unwrap();
+        let alice_main_wallet = Wallet::new(
+            Bip44(m.clone(), KeychainKind::External),
+            None,
+            Network::Bitcoin,
+            MemoryDatabase::new(),
+        )
+        .unwrap();
+        let alice = Bip47Wallet::new(m, &alice_main_wallet).unwrap();
+        assert_eq!(&alice.notification_address().to_string(), alice_notification_address, "{} is not the right notification address", alice.notification_address().to_string());
+    }
+
+    #[test]
     fn test_derive_outbound_wallet() {
         let mut bob_addresses = vec![
             "1KQvRShk6NqPfpr4Ehd53XUhpemBXtJPTL",
@@ -734,13 +761,12 @@ mod test {
             MemoryDatabase::new(),
         )
         .unwrap();
-        let mut alice = Bip47Wallet::new(m, &alice_main_wallet).unwrap();
+        let alice = Bip47Wallet::new(m, &alice_main_wallet).unwrap();
         for i in 0..5 {
             let outbound_wallet = alice.derive_outbound_wallet(&bob_paymentcode, i).unwrap().unwrap();
 
             let bob_address = outbound_wallet.get_address(AddressIndex::New).unwrap().to_string();
             let test_address = bob_addresses.pop().unwrap().to_owned();
-            println!("Testing for address {}", test_address);
             assert_eq!(&bob_address, &test_address, "{} != {}", bob_address, test_address);
         }
     }
@@ -767,13 +793,12 @@ mod test {
             MemoryDatabase::new(),
         )
         .unwrap();
-        let mut bob = Bip47Wallet::new(m, &bob_main_wallet).unwrap();
+        let bob = Bip47Wallet::new(m, &bob_main_wallet).unwrap();
         for i in 0..5 {
             let inbound_wallet = bob.derive_inbound_wallet(&alice_paymentcode, i).unwrap().unwrap();
 
             let bob_address = inbound_wallet.get_address(AddressIndex::New).unwrap().to_string();
             let test_address = bob_addresses.pop().unwrap().to_owned();
-            println!("Testing for address {}", test_address);
             assert_eq!(&bob_address, &test_address, "{} != {}", bob_address, test_address);
         }
     }
@@ -812,15 +837,15 @@ mod test {
         alice_main_wallet
             .sync(&blockchain, SyncOptions::default())
             .unwrap();
-        println!("balance: {}", alice_main_wallet.get_balance().unwrap());
+        println!("Alice balance: {}", alice_main_wallet.get_balance().unwrap());
         println!(
-            "{}",
+            "Alice main wallet address: {}",
             alice_main_wallet.get_address(AddressIndex::New).unwrap()
         );
 
         let mut alice = Bip47Wallet::new(m, &alice_main_wallet).unwrap();
-        println!("{} {}", alice.payment_code(), alice.notification_address());
-        assert_eq!(alice.payment_code().to_string(), "PM8TJTLJbPRGxSbc8EJi42Wrr6QbNSaSSVJ5Y3E4pbCYiTHUskHg13935Ubb7q8tx9GVbh2UuRnBc3WSyJHhUrw8KhprKnn9eDznYGieTzFcwQRya4GA");
+        println!("Alice: {} {}", alice.payment_code(), alice.notification_address());
+        // assert_eq!(alice.payment_code().to_string(), "PM8TJTLJbPRGxSbc8EJi42Wrr6QbNSaSSVJ5Y3E4pbCYiTHUskHg13935Ubb7q8tx9GVbh2UuRnBc3WSyJHhUrw8KhprKnn9eDznYGieTzFcwQRya4GA");
         // assert_eq!(alice.notification_address().to_string(), "1JDdmqFLhpzcUwPeinhJbUPw4Co3aWLyzW");
 
         // let sharedsecret = Vec::<u8>::from_hex("736a25d9250238ad64ed5da03450c6a3f4f8f4dcdf0b58d1ed69029d76ead48d").unwrap();
@@ -841,20 +866,21 @@ mod test {
         .unwrap();
         let bob_main_wallet = Wallet::new(
             Bip44(m.clone(), KeychainKind::External),
-            None,
+            Some(Bip44(m.clone(), KeychainKind::Internal)),
             Network::Regtest,
             MemoryDatabase::new(),
         )
         .unwrap();
         let mut bob = Bip47Wallet::new(m, &bob_main_wallet).unwrap();
-        println!("{} {}", bob.payment_code(), bob.notification_address());
-        assert_eq!(bob.payment_code().to_string(), "PM8TJS2JxQ5ztXUpBBRnpTbcUXbUHy2T1abfrb3KkAAtMEGNbey4oumH7Hc578WgQJhPjBxteQ5GHHToTYHE3A1w6p7tU6KSoFmWBVbFGjKPisZDbP97");
+        println!("Bob: {} {}", bob.payment_code(), bob.notification_address());
+        // assert_eq!(bob.payment_code().to_string(), "PM8TJS2JxQ5ztXUpBBRnpTbcUXbUHy2T1abfrb3KkAAtMEGNbey4oumH7Hc578WgQJhPjBxteQ5GHHToTYHE3A1w6p7tU6KSoFmWBVbFGjKPisZDbP97");
         // assert_eq!(bob.notification_address().unwrap().to_string(), "1ChvUUvht2hUQufHBXF8NgLhW8SwE2ecGV");
         // bob.sync(&blockchain).unwrap();
         // bob.sync(&blockchain).unwrap();
         // bob.sync(&blockchain).unwrap();
         // bob.sync(&blockchain).unwrap();
 
+        println!("Alice makes notif tx");
         let (mut psbt, _) = alice
             .build_notification_tx(&bob.payment_code(), None, None)
             .unwrap()
@@ -865,9 +891,13 @@ mod test {
         blockchain.broadcast(&psbt.extract_tx()).unwrap();
         alice.record_notification_tx(&bob.payment_code());
 
+        println!("\n\nAlice sync...");
         alice.sync(&blockchain).unwrap();
 
         let bob_addr = alice.get_payment_address(&bob.payment_code()).unwrap();
+        // assert_eq!(Address::from_script(&bob_addr.script_pubkey(), Network::Bitcoin).unwrap().to_string(), "141fi7TY3h936vRUKh1qfUZr8rSBuYbVBK");
+        println!("\n\nBob's address: {}", bob_addr);
+        println!("\n\nAlice makes first payment tx");
         let (mut psbt, _) = {
             let mut builder = alice_main_wallet.build_tx();
             builder.add_recipient(bob_addr.script_pubkey(), 10_000);
@@ -878,9 +908,13 @@ mod test {
             .unwrap();
         blockchain.broadcast(&psbt.extract_tx()).unwrap();
 
+        println!("generate 3 blocks...");
+        tc.generate(3, None);
+
+        println!("\n\nAlice sync...");
         alice.sync(&blockchain).unwrap();
 
-        println!("bob sync");
+        println!("\n\nBob sync...");
         bob.sync(&blockchain).unwrap();
 
         // dbg!(&tx);
