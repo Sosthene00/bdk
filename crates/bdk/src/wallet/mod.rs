@@ -43,6 +43,7 @@ pub mod coin_selection;
 pub mod export;
 pub mod signer;
 pub mod tx_builder;
+pub mod bip47;
 pub(crate) mod utils;
 
 #[cfg(feature = "hardware-signer")]
