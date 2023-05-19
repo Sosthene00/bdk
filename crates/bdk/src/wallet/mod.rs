@@ -248,7 +248,7 @@ impl<D> Wallet<D> {
     }
 
     /// Iterator over all keychains in this wallet
-    pub fn keychanins(&self) -> &BTreeMap<KeychainKind, ExtendedDescriptor> {
+    pub fn keychains(&self) -> &BTreeMap<KeychainKind, ExtendedDescriptor> {
         self.keychain_tracker.txout_index.keychains()
     }
 
@@ -358,11 +358,11 @@ impl<D> Wallet<D> {
         self.keychain_tracker.chain().latest_checkpoint()
     }
 
-    /// Returns a iterators of all the script pubkeys for the `Internal` and External` variants in `KeychainKind`.
+    /// Returns a iterators of all the script pubkeys for the `Internal` and `External` variants in `KeychainKind`.
     ///
     /// This is inteded to be used when doing a full scan of your addresses (e.g. after restoring
     /// from seed words). You pass the `BTreeMap` of iterators to a blockchain data source (e.g.
-    /// electrum server) which will go through each address until it reaches a *stop grap*.
+    /// electrum server) which will go through each address until it reaches a *stop gap*.
     ///
     /// Note carefully that iterators go over **all** script pubkeys on the keychains (not what
     /// script pubkeys the wallet is storing internally).
@@ -1508,7 +1508,7 @@ impl<D> Wallet<D> {
 
         if params.add_global_xpubs {
             let all_xpubs = self
-                .keychanins()
+                .keychains()
                 .iter()
                 .flat_map(|(_, desc)| desc.get_extended_keys())
                 .collect::<Vec<_>>();
